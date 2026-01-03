@@ -1,217 +1,187 @@
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import Flask, request, redirect, url_for, session, jsonify
 import sqlite3
 import os
 
 app = Flask(__name__)
 app.secret_key = "chave-super-secreta"
 
-DB = "database.db"
+# =========================
+# BANCO DE DADOS
+# =========================
 
-# =========================
-# BANCO DE DADOS (AUTO FIX)
-# =========================
+def get_db():
+    conn = sqlite3.connect("database.db")
+    conn.row_factory = sqlite3.Row
+    return conn
+
 def init_db():
-    conn = sqlite3.connect(DB)
+    conn = get_db()
     c = conn.cursor()
 
-    # Tabela clínicas
     c.execute("""
     CREATE TABLE IF NOT EXISTS clinicas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nome TEXT,
-        slug TEXT UNIQUE,
+        nome TEXT UNIQUE,
         login TEXT UNIQUE,
         senha TEXT
     )
     """)
 
-    # garante slug em bancos antigos
-    try:
-        c.execute("ALTER TABLE clinicas ADD COLUMN slug TEXT UNIQUE")
-    except:
-        pass
-
-    # tabela clientes
     c.execute("""
     CREATE TABLE IF NOT EXISTS clientes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         clinica_id INTEGER,
         nome TEXT,
-        codigo TEXT,
-        data TEXT,
-        hora TEXT
+        telefone TEXT
     )
     """)
 
     conn.commit()
     conn.close()
 
-
-def get_db():
-    conn = sqlite3.connect(DB)
-    conn.row_factory = sqlite3.Row
-    return conn
-
+init_db()
 
 # =========================
-# LOGIN CLÍNICA
+# ROTAS BÁSICAS
 # =========================
-@app.route("/", methods=["GET", "POST"])
+
+@app.route("/")
+def home():
+    return "🔥 App Estética ONLINE"
+
+# =========================
+# CRIAR CLÍNICA
+# =========================
+
+@app.route("/criar_clinica", methods=["GET", "POST"])
+def criar_clinica():
+    if request.method == "POST":
+        nome = request.form["nome"]
+        login = request.form["login"]
+        senha = request.form["senha"]
+
+        try:
+            conn = get_db()
+            conn.execute(
+                "INSERT INTO clinicas (nome, login, senha) VALUES (?, ?, ?)",
+                (nome, login, senha)
+            )
+            conn.commit()
+            conn.close()
+            return "✅ Clínica criada com sucesso"
+        except:
+            return "❌ Clínica já existe"
+
+    return """
+    <h2>Criar Clínica</h2>
+    <form method="post">
+        Nome: <input name="nome"><br>
+        Login: <input name="login"><br>
+        Senha: <input name="senha" type="password"><br>
+        <button>Criar</button>
+    </form>
+    """
+
+# =========================
+# LOGIN DA CLÍNICA
+# =========================
+
+@app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         login = request.form["login"]
         senha = request.form["senha"]
 
         conn = get_db()
-        c = conn.cursor()
-        c.execute(
+        clinica = conn.execute(
             "SELECT * FROM clinicas WHERE login=? AND senha=?",
             (login, senha)
-        )
-        clinica = c.fetchone()
+        ).fetchone()
         conn.close()
 
         if clinica:
             session["clinica_id"] = clinica["id"]
-            return redirect(url_for("dashboard"))
+            return redirect("/dashboard")
+        else:
+            return "❌ Login inválido"
 
-    return render_template("login.html")
-
+    return """
+    <h2>Login da Clínica</h2>
+    <form method="post">
+        Login: <input name="login"><br>
+        Senha: <input name="senha" type="password"><br>
+        <button>Entrar</button>
+    </form>
+    """
 
 # =========================
-# DASHBOARD (CORRIGIDO)
+# DASHBOARD
 # =========================
+
 @app.route("/dashboard")
 def dashboard():
     if "clinica_id" not in session:
-        return redirect(url_for("login"))
+        return redirect("/login")
+
+    return """
+    <h1>Dashboard</h1>
+    <a href="/clientes">Clientes</a><br>
+    <a href="/logout">Sair</a>
+    """
+
+# =========================
+# CLIENTES
+# =========================
+
+@app.route("/clientes", methods=["GET", "POST"])
+def clientes():
+    if "clinica_id" not in session:
+        return redirect("/login")
 
     conn = get_db()
-    c = conn.cursor()
 
-    c.execute(
-        "SELECT * FROM clinicas WHERE id=?",
-        (session["clinica_id"],)
-    )
-    clinica = c.fetchone()
+    if request.method == "POST":
+        nome = request.form["nome"]
+        telefone = request.form["telefone"]
 
-    if not clinica:
-        conn.close()
-        return redirect(url_for("login"))
-
-    c.execute(
-        "SELECT * FROM clientes WHERE clinica_id=? ORDER BY data, hora",
-        (clinica["id"],)
-    )
-    clientes = c.fetchall()
-
-    conn.close()
-
-    return render_template(
-        "dashboard.html",
-        clinica=clinica,
-        clientes=clientes
-    )
-
-
-# =========================
-# PÁGINA DA CLÍNICA (LINK ÚNICO)
-# =========================
-@app.route("/c/<slug>")
-def clinica_publica(slug):
-    conn = get_db()
-    c = conn.cursor()
-
-    c.execute("SELECT * FROM clinicas WHERE slug=?", (slug,))
-    clinica = c.fetchone()
-    conn.close()
-
-    if not clinica:
-        return "Clínica não encontrada", 404
-
-    return render_template("clinica.html", clinica=clinica)
-
-
-# =========================
-# AGENDAMENTO CLIENTE
-# =========================
-@app.route("/agendar/<slug>", methods=["POST"])
-def agendar(slug):
-    nome = request.form["nome"]
-    data = request.form["data"]
-    hora = request.form["hora"]
-    codigo = os.urandom(4).hex()
-
-    conn = get_db()
-    c = conn.cursor()
-
-    c.execute("SELECT * FROM clinicas WHERE slug=?", (slug,))
-    clinica = c.fetchone()
-
-    if not clinica:
-        conn.close()
-        return "Clínica inválida"
-
-    # bloqueia horário duplicado
-    c.execute("""
-        SELECT * FROM clientes
-        WHERE clinica_id=? AND data=? AND hora=?
-    """, (clinica["id"], data, hora))
-
-    if c.fetchone():
-        conn.close()
-        return "Horário já ocupado"
-
-    c.execute("""
-        INSERT INTO clientes (clinica_id, nome, codigo, data, hora)
-        VALUES (?, ?, ?, ?, ?)
-    """, (clinica["id"], nome, codigo, data, hora))
-
-    conn.commit()
-    conn.close()
-
-    return f"Agendado com sucesso! Código: {codigo}"
-
-
-# =========================
-# CRIAR CLÍNICA (USAR 1 VEZ)
-# =========================
-@app.route("/_criar_clinica")
-def criar_clinica():
-    conn = get_db()
-    c = conn.cursor()
-
-    nome = "Clínica Ribello"
-    slug = "ribello"
-    login = "ribello"
-    senha = "123456"
-
-    try:
-        c.execute("""
-            INSERT INTO clinicas (nome, slug, login, senha)
-            VALUES (?, ?, ?, ?)
-        """, (nome, slug, login, senha))
+        conn.execute(
+            "INSERT INTO clientes (clinica_id, nome, telefone) VALUES (?, ?, ?)",
+            (session["clinica_id"], nome, telefone)
+        )
         conn.commit()
-        msg = "Clínica criada com sucesso"
-    except:
-        msg = "Clínica já existe"
 
+    clientes = conn.execute(
+        "SELECT * FROM clientes WHERE clinica_id=?",
+        (session["clinica_id"],)
+    ).fetchall()
     conn.close()
-    return msg
 
+    lista = "".join([f"<li>{c['nome']} - {c['telefone']}</li>" for c in clientes])
+
+    return f"""
+    <h2>Clientes</h2>
+    <form method="post">
+        Nome: <input name="nome">
+        Telefone: <input name="telefone">
+        <button>Adicionar</button>
+    </form>
+    <ul>{lista}</ul>
+    <a href="/dashboard">Voltar</a>
+    """
 
 # =========================
 # LOGOUT
 # =========================
+
 @app.route("/logout")
 def logout():
     session.clear()
-    return redirect(url_for("login"))
-
+    return redirect("/login")
 
 # =========================
-# START
+# RENDER (ESSENCIAL)
 # =========================
+
 if __name__ == "__main__":
-    init_db()
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
