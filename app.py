@@ -283,6 +283,42 @@ def dashboard():
     </div>
     """)
 
+# ===== CRIAR CLÍNICA MANUALMENTE (USAR 1 VEZ) =====
+@app.route('/_criar_clinica')
+def criar_clinica_manual():
+    conn = sqlite3.connect('database.db')
+    c = conn.cursor()
+
+    # cria tabela se não existir
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS clinicas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT,
+        slug TEXT UNIQUE,
+        login TEXT,
+        senha TEXT
+    )
+    """)
+
+    # dados da clínica
+    nome = "Clínica Ribello"
+    slug = "ribello"
+    login = "ribello"
+    senha = "123456"
+
+    try:
+        c.execute(
+            "INSERT INTO clinicas (nome, slug, login, senha) VALUES (?, ?, ?, ?)",
+            (nome, slug, login, senha)
+        )
+        conn.commit()
+        msg = "Clínica criada com sucesso"
+    except sqlite3.IntegrityError:
+        msg = "Clínica já existe"
+
+    conn.close()
+    return msg
+
 # =============================
 if __name__ == "__main__":
     with app.app_context():
