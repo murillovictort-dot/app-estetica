@@ -1,16 +1,20 @@
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string, redirect, url_for
 
 app = Flask(__name__)
 
-# Armazena os agendamentos (em memória)
-agendamentos = []
+# Armazena agendamentos separados por clínica
+# Ex: {"clinica1": [ {dados}, {dados} ]}
+agendamentos = {}
 
+# -----------------------------
+# PÁGINA PÚBLICA (CLIENTE)
+# -----------------------------
 HTML_CLIENTE = """
 <!DOCTYPE html>
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
-    <title>Agendamento Clínica</title>
+    <title>Agendamento - {{ clinica }}</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -18,12 +22,12 @@ HTML_CLIENTE = """
             padding: 20px;
         }
         .card {
-            max-width: 500px;
+            max-width: 420px;
             background: white;
             margin: auto;
             padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            border-radius: 12px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.15);
         }
         h2 {
             text-align: center;
@@ -32,9 +36,9 @@ HTML_CLIENTE = """
         input, textarea, button {
             width: 100%;
             padding: 10px;
-            margin-top: 6px;
+            margin-top: 8px;
             margin-bottom: 12px;
-            border-radius: 5px;
+            border-radius: 6px;
             border: 1px solid #ccc;
         }
         button {
@@ -47,131 +51,120 @@ HTML_CLIENTE = """
         button:hover {
             background: #27ae60;
         }
-        .msg {
-            margin-top: 15px;
-            padding: 10px;
-            background: #e8f5e9;
-            border-radius: 5px;
-            color: #2e7d32;
-            text-align: center;
-        }
     </style>
 </head>
-
 <body>
-<div class="card">
-    <h2>📅 Agendar Consulta</h2>
-
-    <form method="post">
-        <input name="nome" placeholder="Nome do paciente" required>
-        <input name="procedimento" placeholder="Procedimento" required>
-        <input type="date" name="data" required>
-        <input type="time" name="hora" required>
-        <textarea name="obs" placeholder="Observações (opcional)"></textarea>
-        <button type="submit">Confirmar Agendamento</button>
-    </form>
-
-    {% if enviado %}
-    <div class="msg">
-        ✅ Agendamento enviado com sucesso.<br>
-        A clínica entrará em contato para confirmar.
+    <div class="card">
+        <h2>Agendar na clínica {{ clinica }}</h2>
+        <form method="POST">
+            <input type="text" name="nome" placeholder="Seu nome" required>
+            <input type="tel" name="telefone" placeholder="Telefone" required>
+            <input type="date" name="data" required>
+            <input type="time" name="hora" required>
+            <textarea name="obs" placeholder="Observações (opcional)"></textarea>
+            <button type="submit">Agendar</button>
+        </form>
     </div>
-    {% endif %}
-</div>
 </body>
 </html>
 """
 
-HTML_ADMIN = """
+# -----------------------------
+# PÁGINA DA CLÍNICA (INTERNA)
+# -----------------------------
+HTML_CLINICA = """
 <!DOCTYPE html>
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
-    <title>Agenda da Clínica</title>
+    <title>Agenda - {{ clinica }}</title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            background: #eef2f5;
+            background: #ecf0f1;
             padding: 20px;
-        }
-        .card {
-            max-width: 900px;
-            background: white;
-            margin: auto;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
         }
         h2 {
             text-align: center;
-            color: #2c3e50;
         }
         table {
             width: 100%;
+            max-width: 900px;
+            margin: auto;
             border-collapse: collapse;
-            margin-top: 20px;
+            background: white;
         }
         th, td {
-            border: 1px solid #ddd;
-            padding: 8px;
+            padding: 10px;
+            border: 1px solid #ccc;
             text-align: center;
         }
         th {
-            background: #3498db;
+            background: #34495e;
             color: white;
         }
     </style>
 </head>
-
 <body>
-<div class="card">
-    <h2>📋 Agenda da Clínica</h2>
+    <h2>Agenda da clínica {{ clinica }}</h2>
 
-    {% if agendamentos %}
     <table>
         <tr>
-            <th>Paciente</th>
-            <th>Procedimento</th>
+            <th>Nome</th>
+            <th>Telefone</th>
             <th>Data</th>
-            <th>Horário</th>
-            <th>Observações</th>
+            <th>Hora</th>
+            <th>Obs</th>
         </tr>
+
         {% for a in agendamentos %}
         <tr>
             <td>{{ a.nome }}</td>
-            <td>{{ a.procedimento }}</td>
+            <td>{{ a.telefone }}</td>
             <td>{{ a.data }}</td>
             <td>{{ a.hora }}</td>
             <td>{{ a.obs }}</td>
         </tr>
         {% endfor %}
     </table>
-    {% else %}
-    <p style="text-align:center;">Nenhum agendamento ainda.</p>
-    {% endif %}
-</div>
 </body>
 </html>
 """
 
-@app.route("/", methods=["GET", "POST"])
-def cliente():
-    enviado = False
+# -----------------------------
+# ROTA CLIENTE
+# -----------------------------
+@app.route("/clinica/<clinica>", methods=["GET", "POST"])
+def pagina_cliente(clinica):
+    if clinica not in agendamentos:
+        agendamentos[clinica] = []
+
     if request.method == "POST":
-        agendamentos.append({
-            "nome": request.form.get("nome"),
-            "procedimento": request.form.get("procedimento"),
-            "data": request.form.get("data"),
-            "hora": request.form.get("hora"),
-            "obs": request.form.get("obs")
+        agendamentos[clinica].append({
+            "nome": request.form["nome"],
+            "telefone": request.form["telefone"],
+            "data": request.form["data"],
+            "hora": request.form["hora"],
+            "obs": request.form.get("obs", "")
         })
-        enviado = True
+        return redirect(url_for("pagina_cliente", clinica=clinica))
 
-    return render_template_string(HTML_CLIENTE, enviado=enviado)
+    return render_template_string(HTML_CLIENTE, clinica=clinica)
 
-@app.route("/admin")
-def admin():
-    return render_template_string(HTML_ADMIN, agendamentos=agendamentos)
+# -----------------------------
+# ROTA DA CLÍNICA (AGENDA)
+# -----------------------------
+@app.route("/agenda/<clinica>")
+def pagina_clinica(clinica):
+    lista = agendamentos.get(clinica, [])
+    return render_template_string(
+        HTML_CLINICA,
+        clinica=clinica,
+        agendamentos=lista
+    )
 
+# -----------------------------
+# INICIAR APP
+# -----------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
