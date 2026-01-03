@@ -1,6 +1,7 @@
-from flask import Flask, request, redirect, session, render_template_string, g, url_for
+from flask import Flask, request, redirect, session, render_template_string, g, abort
 import sqlite3
 from datetime import datetime
+import os
 
 app = Flask(__name__)
 app.secret_key = "segredo_ultra_secreto"
@@ -27,9 +28,10 @@ def init_db():
     db.executescript("""
     CREATE TABLE IF NOT EXISTS clinicas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nome TEXT,
-        login TEXT UNIQUE,
-        senha TEXT
+        nome TEXT NOT NULL,
+        slug TEXT UNIQUE NOT NULL,
+        login TEXT UNIQUE NOT NULL,
+        senha TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS agendamentos (
@@ -39,18 +41,15 @@ def init_db():
         telefone TEXT,
         data TEXT,
         hora TEXT,
-        criado_em TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS conversas (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        clinica_id INTEGER,
-        mensagem TEXT,
-        resposta TEXT,
+        dor TEXT,
         criado_em TEXT
     );
     """)
     db.commit()
+
+@app.before_request
+def before_request():
+    init_db()
 
 # =============================
 # ESTILO PREMIUM
@@ -58,14 +57,14 @@ def init_db():
 STYLE = """
 <style>
 body {
-    background: #0b0b0b;
+    background: linear-gradient(135deg, #0e0e0e, #1a1a1a);
     color: #f5f5f5;
     font-family: 'Georgia', serif;
     padding: 40px;
 }
-h1, h2 {
+h1, h2, h3 {
     color: #d4af37;
-    text-align: center;
+    letter-spacing: 1px;
 }
 input, textarea, button {
     width: 100%;
@@ -74,24 +73,27 @@ input, textarea, button {
     background: #111;
     border: 1px solid #d4af37;
     color: white;
+    border-radius: 6px;
 }
 button {
-    background: linear-gradient(90deg, #d4af37, #b8962e);
+    background: #d4af37;
+    color: black;
     font-weight: bold;
     cursor: pointer;
 }
 .box {
     max-width: 650px;
     margin: auto;
-    border: 1px solid #222;
-    padding: 30px;
 }
 .card {
-    border-bottom: 1px solid #333;
-    padding: 10px 0;
+    border: 1px solid #333;
+    padding: 14px;
+    margin: 10px 0;
+    border-radius: 8px;
 }
-small {
+.small {
     color: #aaa;
+    font-size: 14px;
 }
 </style>
 """
@@ -105,123 +107,13 @@ def home():
     {STYLE}
     <div class="box">
         <h1>Plataforma Premium de Clínicas</h1>
-        <p style="text-align:center">Agendamento elegante e inteligente</p>
-        <p style="text-align:center">
-            <a href="/login" style="color:#d4af37">Login da clínica</a>
-        </p>
+        <p>Agendamento inteligente e elegante</p>
+        <a href="/login"><button>Login da Clínica</button></a>
     </div>
     """)
 
 # =============================
-# ADMIN - CRIAR CLÍNICA
-# =============================
-@app.route("/admin", methods=["GET", "POST"])
-def admin():
-    msg = ""
-    if request.method == "POST":
-        db = get_db()
-        try:
-            db.execute(
-                "INSERT INTO clinicas (nome, login, senha) VALUES (?, ?, ?)",
-                (
-                    request.form["nome"],
-                    request.form["login"],
-                    request.form["senha"]
-                )
-            )
-            db.commit()
-            msg = "Clínica criada com sucesso!"
-        except:
-            msg = "Erro: login já existe"
-
-    return render_template_string(f"""
-    {STYLE}
-    <div class="box">
-        <h2>Criar Clínica</h2>
-        <form method="POST">
-            <input name="nome" placeholder="Nome da clínica" required>
-            <input name="login" placeholder="Login (ex: ribello)" required>
-            <input name="senha" placeholder="Senha" required>
-            <button>Criar</button>
-        </form>
-        <p>{msg}</p>
-    </div>
-    """)
-
-# =============================
-# AGENDAMENTO CLIENTE
-# =============================
-@app.route("/c/<login>", methods=["GET", "POST"])
-def cliente(login):
-    db = get_db()
-    clinica = db.execute(
-        "SELECT * FROM clinicas WHERE login=?",
-        (login,)
-    ).fetchone()
-
-    if not clinica:
-        return "Clínica não encontrada"
-
-    erro = ""
-    resposta = ""
-
-    if request.method == "POST":
-        nome = request.form["nome"]
-        telefone = request.form["telefone"]
-        data = request.form["data"]
-        hora = request.form["hora"]
-        mensagem = request.form["mensagem"]
-
-        conflito = db.execute(
-            "SELECT 1 FROM agendamentos WHERE clinica_id=? AND data=? AND hora=?",
-            (clinica["id"], data, hora)
-        ).fetchone()
-
-        if conflito:
-            erro = "Horário indisponível"
-        else:
-            if "acne" in mensagem.lower():
-                resposta = "Indicamos protocolo antiacne premium."
-            elif "mancha" in mensagem.lower():
-                resposta = "Tratamento de clareamento avançado."
-            else:
-                resposta = "Avaliação dermatológica personalizada."
-
-            db.execute("""
-                INSERT INTO agendamentos
-                (clinica_id, nome, telefone, data, hora, criado_em)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (clinica["id"], nome, telefone, data, hora, datetime.now()))
-
-            db.execute("""
-                INSERT INTO conversas
-                (clinica_id, mensagem, resposta, criado_em)
-                VALUES (?, ?, ?, ?)
-            """, (clinica["id"], mensagem, resposta, datetime.now()))
-
-            db.commit()
-            return redirect(url_for("cliente", login=login))
-
-    return render_template_string(f"""
-    {STYLE}
-    <div class="box">
-        <h1>{clinica['nome']}</h1>
-        <h2>Agendamento</h2>
-        <form method="POST">
-            <input name="nome" placeholder="Seu nome" required>
-            <input name="telefone" placeholder="Telefone" required>
-            <input type="date" name="data" required>
-            <input type="time" name="hora" required>
-            <textarea name="mensagem" placeholder="Conte suas queixas ou dúvidas" required></textarea>
-            <button>Agendar</button>
-        </form>
-        <p style="color:red">{erro}</p>
-        <p style="color:#d4af37">{resposta}</p>
-    </div>
-    """)
-
-# =============================
-# LOGIN CLÍNICA
+# LOGIN DA CLÍNICA
 # =============================
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -243,8 +135,8 @@ def login():
     <div class="box">
         <h2>Login da Clínica</h2>
         <form method="POST">
-            <input name="login" placeholder="Login">
-            <input type="password" name="senha" placeholder="Senha">
+            <input name="login" placeholder="Login" required>
+            <input type="password" name="senha" placeholder="Senha" required>
             <button>Entrar</button>
         </form>
         <p style="color:red">{erro}</p>
@@ -252,7 +144,7 @@ def login():
     """)
 
 # =============================
-# DASHBOARD CLÍNICA
+# DASHBOARD
 # =============================
 @app.route("/dashboard")
 def dashboard():
@@ -260,66 +152,94 @@ def dashboard():
         return redirect("/login")
 
     db = get_db()
-    cid = session["clinica_id"]
+    clinica = db.execute(
+        "SELECT * FROM clinicas WHERE id=?",
+        (session["clinica_id"],)
+    ).fetchone()
+
+    if not clinica:
+        session.clear()
+        return redirect("/login")
 
     ags = db.execute(
         "SELECT * FROM agendamentos WHERE clinica_id=? ORDER BY data, hora",
-        (cid,)
-    ).fetchall()
-
-    chats = db.execute(
-        "SELECT * FROM conversas WHERE clinica_id=? ORDER BY criado_em DESC",
-        (cid,)
+        (clinica["id"],)
     ).fetchall()
 
     return render_template_string(f"""
     {STYLE}
     <div class="box">
-        <h2>Agenda</h2>
-        {''.join([f"<div class='card'>{a['data']} {a['hora']} - {a['nome']}</div>" for a in ags])}
+        <h2>{clinica['nome']}</h2>
+        <p class="small">Link da clínica:</p>
+        <p><b>/c/{clinica['slug']}</b></p>
 
-        <h2>Relatório de Conversas</h2>
-        {''.join([f"<div class='card'><small>{c['mensagem']}</small><br><b>{c['resposta']}</b></div>" for c in chats])}
+        <h3>Agenda</h3>
+        {"".join([
+            f"<div class='card'>{a['data']} {a['hora']} — {a['nome']}</div>"
+            for a in ags
+        ]) or "<p>Nenhum agendamento ainda</p>"}
     </div>
     """)
 
-# ===== CRIAR CLÍNICA MANUALMENTE (USAR 1 VEZ) =====
-@app.route('/_criar_clinica')
-def criar_clinica_manual():
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
+# =============================
+# AGENDAMENTO (CLIENTE)
+# =============================
+@app.route("/c/<slug>", methods=["GET", "POST"])
+def agendar(slug):
+    db = get_db()
+    clinica = db.execute(
+        "SELECT * FROM clinicas WHERE slug=?",
+        (slug,)
+    ).fetchone()
 
-    # cria tabela se não existir
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS clinicas (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nome TEXT,
-        slug TEXT UNIQUE,
-        login TEXT,
-        senha TEXT
-    )
+    if not clinica:
+        abort(404)
+
+    erro = ""
+    if request.method == "POST":
+        nome = request.form["nome"]
+        telefone = request.form["telefone"]
+        data = request.form["data"]
+        hora = request.form["hora"]
+        dor = request.form["dor"]
+
+        conflito = db.execute("""
+            SELECT 1 FROM agendamentos
+            WHERE clinica_id=? AND data=? AND hora=?
+        """, (clinica["id"], data, hora)).fetchone()
+
+        if conflito:
+            erro = "Horário indisponível"
+        else:
+            db.execute("""
+                INSERT INTO agendamentos
+                (clinica_id, nome, telefone, data, hora, dor, criado_em)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                clinica["id"], nome, telefone, data, hora, dor,
+                datetime.now().strftime("%Y-%m-%d %H:%M")
+            ))
+            db.commit()
+            return redirect("/")
+
+    return render_template_string(f"""
+    {STYLE}
+    <div class="box">
+        <h1>{clinica['nome']}</h1>
+        <h3>Agendamento</h3>
+        <form method="POST">
+            <input name="nome" placeholder="Nome" required>
+            <input name="telefone" placeholder="Telefone" required>
+            <input type="date" name="data" required>
+            <input type="time" name="hora" required>
+            <textarea name="dor" placeholder="O que te incomoda?" required></textarea>
+            <button>Agendar</button>
+        </form>
+        <p style="color:red">{erro}</p>
+    </div>
     """)
-
-    # dados da clínica
-    nome = "Clínica Ribello"
-    slug = "ribello"
-    login = "ribello"
-    senha = "123456"
-
-    try:
-        c.execute(
-            "INSERT INTO clinicas (nome, slug, login, senha) VALUES (?, ?, ?, ?)",
-            (nome, slug, login, senha)
-        )
-        conn.commit()
-        msg = "Clínica criada com sucesso"
-    except sqlite3.IntegrityError:
-        msg = "Clínica já existe"
-
-    conn.close()
-    return msg
 
 # =============================
 if __name__ == "__main__":
-    with app.app_context():
-        init_db()
+    app.run(host="0.0.0.0", port=5000)
+
