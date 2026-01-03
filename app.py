@@ -2,6 +2,16 @@ from flask import Flask, request, render_template_string, redirect, url_for
 
 app = Flask(__name__)
 
+@app.route("/")
+def home():
+    return """
+    <h2>Agendamento Online</h2>
+    <p>Use um link no formato:</p>
+    <p><b>/clinica/NOME_DA_CLINICA</b></p>
+    <p>Exemplo:</p>
+    <a href='/clinica/ana'>/clinica/ana</a>
+    """
+
 # Armazena agendamentos separados por clínica
 # Ex: {"clinica1": [ {dados}, {dados} ]}
 agendamentos = {}
