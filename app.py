@@ -1,12 +1,17 @@
-from flask import Flask, request, redirect, session, render_template_string, g
+from flask import Flask, request, redirect, session, g, jsonify
 import sqlite3
 from datetime import datetime
 import uuid
+import os
 
+# ======================
+# CONFIG
+# ======================
 app = Flask(__name__)
-app.secret_key = "cliniquesecret"
+app.secret_key = "super_secret_key_123"
 
-DATABASE = "database.db"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE = os.path.join(BASE_DIR, "database.db")
 
 # ======================
 # DATABASE
@@ -24,8 +29,10 @@ def close_db(e=None):
         db.close()
 
 def init_db():
-    db = get_db()
-    db.executescript("""
+    db = sqlite3.connect(DATABASE)
+    cursor = db.cursor()
+
+    cursor.executescript("""
     CREATE TABLE IF NOT EXISTS clinicas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT,
@@ -45,178 +52,162 @@ def init_db():
         criado_em TEXT
     );
     """)
+
     db.commit()
+    db.close()
+
+with app.app_context():
+    init_db()
 
 # ======================
-# ESTILO PREMIUM
+# HELPERS
 # ======================
-STYLE = """
-<style>
-body {
-    background: linear-gradient(120deg, #0f0f0f, #1a1a1a);
-    color: #fff;
-    font-family: 'Segoe UI', sans-serif;
-}
-.container {
-    max-width: 420px;
-    margin: 60px auto;
-    background: #111;
-    padding: 30px;
-    border-radius: 12px;
-    box-shadow: 0 0 30px rgba(212,175,55,0.2);
-}
-h1,h2 {
-    color: #d4af37;
-    text-align: center;
-}
-input, button {
-    width: 100%;
-    padding: 12px;
-    margin-top: 10px;
-    background: #1c1c1c;
-    border: 1px solid #d4af37;
-    color: white;
-    border-radius: 6px;
-}
-button {
-    cursor: pointer;
-    font-weight: bold;
-}
-.card {
-    background: #1a1a1a;
-    padding: 10px;
-    border-radius: 6px;
-    margin-top: 10px;
-}
-small {
-    color: #aaa;
-}
-</style>
-"""
+def clinica_logada():
+    return "clinica_id" in session
 
 # ======================
-# HOME
+# ROTAS PUBLICAS
 # ======================
 @app.route("/")
 def home():
-    return render_template_string(f"""
-    {STYLE}
-    <div class="container">
-        <h1>CLINIQUE</h1>
-        <p style="text-align:center;">Agendamento inteligente para clínicas modernas</p>
-        <p style="text-align:center;"><small>Área do cliente é acessada pelo link da clínica</small></p>
-        <a href="/login"><button>Login da Clínica</button></a>
-    </div>
-    """)
+    return "<h1>SaaS de Agendamento Online</h1><p>Use /c/slug-da-clinica</p>"
 
-# ======================
-# CLIENTE
-# ======================
-@app.route("/c/<slug>", methods=["GET", "POST"])
-def cliente(slug):
+@app.route("/c/<slug>")
+def pagina_clinica(slug):
     db = get_db()
-    clinica = db.execute("SELECT * FROM clinicas WHERE slug=?", (slug,)).fetchone()
+    clinica = db.execute(
+        "SELECT * FROM clinicas WHERE slug = ?",
+        (slug,)
+    ).fetchone()
+
     if not clinica:
-        return "Clínica não encontrada"
+        return "Clínica não encontrada", 404
 
-    erro = ""
-    codigo = None
+    return f"""
+    <h2>Agendar em {clinica['nome']}</h2>
+    <form method="POST" action="/agendar/{slug}">
+        <input name="nome" placeholder="Seu nome" required><br>
+        <input name="telefone" placeholder="Telefone" required><br>
+        <input name="data" type="date" required><br>
+        <input name="hora" type="time" required><br>
+        <button>Agendar</button>
+    </form>
+    """
 
-    if request.method == "POST":
-        nome = request.form["nome"]
-        telefone = request.form["telefone"]
-        data = request.form["data"]
-        hora = request.form["hora"]
+@app.route("/agendar/<slug>", methods=["POST"])
+def agendar(slug):
+    db = get_db()
+    clinica = db.execute(
+        "SELECT id FROM clinicas WHERE slug = ?",
+        (slug,)
+    ).fetchone()
 
-        conflito = db.execute("""
-            SELECT * FROM agendamentos
-            WHERE clinica_id=? AND data=? AND hora=?
-        """, (clinica["id"], data, hora)).fetchone()
+    if not clinica:
+        return "Clínica inválida", 404
 
-        if conflito:
-            erro = "Horário indisponível"
-        else:
-            codigo = str(uuid.uuid4())[:8]
-            db.execute("""
-                INSERT INTO agendamentos
-                (clinica_id, nome, telefone, data, hora, codigo, criado_em)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (clinica["id"], nome, telefone, data, hora, codigo, datetime.now()))
-            db.commit()
+    codigo = str(uuid.uuid4())[:8]
 
-    return render_template_string(f"""
-    {STYLE}
-    <div class="container">
-        <h2>{clinica['nome']}</h2>
-        <form method="POST">
-            <input name="nome" placeholder="Seu nome" required>
-            <input name="telefone" placeholder="Telefone" required>
-            <input type="date" name="data" required>
-            <input type="time" name="hora" required>
-            <button>Agendar</button>
-        </form>
-        <p style="color:red;">{erro}</p>
-        {"<div class='card'>Consulta confirmada<br><b>Código:</b> "+codigo+"</div>" if codigo else ""}
-    </div>
-    """)
+    db.execute("""
+        INSERT INTO agendamentos
+        (clinica_id, nome, telefone, data, hora, codigo, criado_em)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        clinica["id"],
+        request.form["nome"],
+        request.form["telefone"],
+        request.form["data"],
+        request.form["hora"],
+        codigo,
+        datetime.now().isoformat()
+    ))
+
+    db.commit()
+
+    return f"""
+    <h3>Agendamento confirmado!</h3>
+    <p>Código: <b>{codigo}</b></p>
+    """
 
 # ======================
-# LOGIN CLÍNICA
+# AUTH CLINICA
 # ======================
-@app.route("/login", methods=["GET","POST"])
+@app.route("/login", methods=["GET", "POST"])
 def login():
-    erro = ""
     if request.method == "POST":
         db = get_db()
-        c = db.execute("""
+        clinica = db.execute("""
             SELECT * FROM clinicas
-            WHERE login=? AND senha=?
-        """, (request.form["login"], request.form["senha"])).fetchone()
-        if c:
-            session["clinica_id"] = c["id"]
-            return redirect("/dashboard")
-        erro = "Login inválido"
+            WHERE login = ? AND senha = ?
+        """, (
+            request.form["login"],
+            request.form["senha"]
+        )).fetchone()
 
-    return render_template_string(f"""
-    {STYLE}
-    <div class="container">
-        <h2>Login da Clínica</h2>
-        <form method="POST">
-            <input name="login" placeholder="Login">
-            <input type="password" name="senha" placeholder="Senha">
-            <button>Entrar</button>
-        </form>
-        <p style="color:red;">{erro}</p>
-    </div>
-    """)
+        if clinica:
+            session["clinica_id"] = clinica["id"]
+            return redirect("/dashboard")
+
+        return "Login inválido"
+
+    return """
+    <h2>Login da Clínica</h2>
+    <form method="POST">
+        <input name="login" placeholder="Login"><br>
+        <input name="senha" type="password" placeholder="Senha"><br>
+        <button>Entrar</button>
+    </form>
+    """
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/login")
 
 # ======================
-# DASHBOARD
+# DASHBOARD CLINICA
 # ======================
 @app.route("/dashboard")
 def dashboard():
-    if "clinica_id" not in session:
+    if not clinica_logada():
         return redirect("/login")
 
     db = get_db()
-    cid = session["clinica_id"]
-
-    ags = db.execute("""
-        SELECT * FROM agendamentos
-        WHERE clinica_id=?
+    agendamentos = db.execute("""
+        SELECT nome, data, hora
+        FROM agendamentos
+        WHERE clinica_id = ?
         ORDER BY data, hora
-    """, (cid,)).fetchall()
+    """, (session["clinica_id"],)).fetchall()
 
-    return render_template_string(f"""
-    {STYLE}
-    <div class="container">
-        <h2>Agenda</h2>
-        {''.join([f"<div class='card'>{a['data']} {a['hora']} - {a['nome']}</div>" for a in ags])}
-    </div>
-    """)
+    html = "<h2>Dashboard</h2><ul>"
+    for a in agendamentos:
+        html += f"<li>{a['data']} {a['hora']} - {a['nome']}</li>"
+    html += "</ul><a href='/logout'>Sair</a>"
+
+    return html
 
 # ======================
+# CRIAR CLINICA (ADMIN)
+# ======================
+@app.route("/criar_clinica", methods=["POST"])
+def criar_clinica():
+    db = get_db()
+
+    db.execute("""
+        INSERT INTO clinicas (nome, slug, login, senha)
+        VALUES (?, ?, ?, ?)
+    """, (
+        request.json["nome"],
+        request.json["slug"],
+        request.json["login"],
+        request.json["senha"]
+    ))
+
+    db.commit()
+    return jsonify({"status": "ok"})
+
+# ======================
+# START
+# ======================
 if __name__ == "__main__":
-    with app.app_context():
-        init_db()
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=10000)
