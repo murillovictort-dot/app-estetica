@@ -1,27 +1,18 @@
 <!DOCTYPE html>
-<html lang="pt-br">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>Agendamento Premium</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <title>Agendamento</title>
 </head>
 <body>
-
-<div class="container">
-    <h1>Agende seu horário</h1>
-    <p class="subtitle">Atendimento estético com elegância</p>
-
+    <h2>Agendar Horário</h2>
     <form method="POST">
-        <input type="text" name="nome" placeholder="Seu nome" required>
-        <input type="text" name="telefone" placeholder="WhatsApp" required>
-        <input type="date" name="data" required>
-        <input type="time" name="hora" required>
-        <textarea name="dor" placeholder="O que te incomoda hoje?"></textarea>
-
-        <button type="submit">Agendar agora</button>
+        Clínica (login): <input name="clinica"><br>
+        Nome: <input name="nome"><br>
+        Telefone: <input name="telefone"><br>
+        Data: <input type="date" name="data"><br>
+        Hora: <input type="time" name="hora"><br>
+        <button>Agendar</button>
     </form>
-</div>
-
+    <p>{{msg}}</p>
 </body>
 </html>
-

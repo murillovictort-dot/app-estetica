@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard</title>
+</head>
+<body>
+    <h2>Agenda da Clínica</h2>
+    <a href="/logout">Sair</a>
+    <ul>
+        {% for a in agendamentos %}
+        <li>{{a[0]}} {{a[1]}} - {{a[2]}} ({{a[3]}})</li>
+        {% endfor %}
+    </ul>
+</body>
+</html>
